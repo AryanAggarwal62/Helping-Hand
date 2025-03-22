@@ -26,16 +26,35 @@ int angleToPulse(int angle) {
 
 // Pinch: Close thumb and index finger to a beefier angle
 void pinch() {
-    int adjustedAngle = 60;  // Cranked to 100 degrees for MORE movement
+    int adjustedAngle = 45;
+    int adjustedAngle2 = 60;  // Cranked to 100 degrees for MORE movement
     int pulse = angleToPulse(adjustedAngle);
+    int pulse2 = angleToPulse(adjustedAngle2);
     Serial.print("Adjusted angle: ");
     Serial.print(adjustedAngle);
     Serial.print(" degrees, Pulse width: ");
     Serial.println(pulse);
     pwm.setPWM(THUMB_SERVO, 0, pulse);
-    pwm.setPWM(INDEX_SERVO, 0, pulse);
-    //pwm.setPWM(MIDDLE_SERVO, 0, angleToPulse(0));
-    //pwm.setPWM(RING_SERVO, 0, angleToPulse(0));
+    pwm.setPWM(INDEX_SERVO, 0, pulse2);
+    pwm.setPWM(MIDDLE_SERVO, 0, angleToPulse(0));
+    pwm.setPWM(SERVO_1, 0, angleToPulse(0));
+    pwm.setPWM(SERVO_2, 0, angleToPulse(0));
+}
+void grab() {
+    int adjustedAngle = 50;
+    int adjustedAngle2 = 70;  // Cranked to 100 degrees for MORE movement
+    int pulse = angleToPulse(adjustedAngle);
+    int pulse2 = angleToPulse(adjustedAngle2);
+    Serial.print("Adjusted angle: ");
+    Serial.print(adjustedAngle);
+    Serial.print(" degrees, Pulse width: ");
+    Serial.println(pulse);
+    pwm.setPWM(THUMB_SERVO, 0, pulse);
+    pwm.setPWM(INDEX_SERVO, 0, pulse2);
+    pwm.setPWM(MIDDLE_SERVO, 0, pulse2);
+    pwm.setPWM(SERVO_1, 0, angleToPulse(0));
+    pwm.setPWM(SERVO_2, 0, pulse);
+    pwm.setPWM(3, 0, pulse2);
 }
 
 void setup() {
