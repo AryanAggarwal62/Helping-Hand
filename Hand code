@@ -1,0 +1,56 @@
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+
+// Initialize PCA9685 at default address 0x40
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
+
+// Servo pulse width range (0° to 270°)
+#define SERVO_MIN  100   // Pulse width for 0°
+#define SERVO_MAX  700   // Pulse width for 270°
+#define SERVO_FREQ 50    // Servo frequency in Hz
+
+// Servo channel definitions
+#define SERVO_1 0        // Wrist (base rotation)
+#define SERVO_2 1        // Angler joint
+#define THUMB_SERVO 2    // Thumb
+#define INDEX_SERVO 4    // Index finger
+#define MIDDLE_SERVO 5   // Middle finger
+#define RING_SERVO 6     // Ring finger
+// Channels 7+ are for other functions; channel 3 is unused
+
+// Function to convert angle to pulse width
+int angleToPulse(int angle) {
+    int pulse = map(angle, 0, 270, SERVO_MIN, SERVO_MAX);
+    return pulse;
+}
+
+// Pinch: Close thumb and index finger to a beefier angle
+void pinch() {
+    int adjustedAngle = 60;  // Cranked to 100 degrees for MORE movement
+    int pulse = angleToPulse(adjustedAngle);
+    Serial.print("Adjusted angle: ");
+    Serial.print(adjustedAngle);
+    Serial.print(" degrees, Pulse width: ");
+    Serial.println(pulse);
+    pwm.setPWM(THUMB_SERVO, 0, pulse);
+    pwm.setPWM(INDEX_SERVO, 0, pulse);
+    //pwm.setPWM(MIDDLE_SERVO, 0, angleToPulse(0));
+    //pwm.setPWM(RING_SERVO, 0, angleToPulse(0));
+}
+
+void setup() {
+    Serial.begin(115200);
+    Serial.println("Starting PCA9685 Servo Test...");
+    Wire.begin();
+    pwm.begin();
+    pwm.setPWMFreq(SERVO_FREQ);
+    delay(500);
+    Serial.println("PCA9685 Initialized!");
+    Serial.println("Initial positions set.");
+}
+
+void loop() {
+    Serial.println("Pinching...");
+    pinch();
+    delay(2000);  // Hold pinch for 2 seconds
+}
