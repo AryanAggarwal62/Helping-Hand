@@ -1,6 +1,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <esp_http_server.h>
+#include <ArduinoJson.h>
 
 // Camera Pin Config (unchanged)
 #define PWDN_GPIO_NUM     -1
@@ -27,7 +28,17 @@ const char* password = "deeznuts";
 #define STREAM_CONTENT_TYPE "multipart/x-mixed-replace;boundary=frame"
 #define STREAM_BOUNDARY "\r\n--frame\r\n"
 
-// Stream Handler
+// Movement variables
+struct Movement {
+  int up = 0;
+  int down = 0;
+  int left = 0;
+  int right = 0;
+  int forward = 0;
+  int backward = 0;
+} movement;
+
+// Stream Handler (unchanged)
 esp_err_t stream_handler(httpd_req_t *req) {
   camera_fb_t *fb = NULL;
   esp_err_t res = ESP_OK;
@@ -37,18 +48,16 @@ esp_err_t stream_handler(httpd_req_t *req) {
   res = httpd_resp_set_type(req, STREAM_CONTENT_TYPE);
   if (res != ESP_OK) return res;
 
-  // Disable keep-alive to free resources faster
   httpd_resp_set_hdr(req, "Connection", "close");
 
   while (true) {
     fb = esp_camera_fb_get();
     if (!fb) {
       Serial.println("Camera capture failed");
-      delay(50); // Reduced from 100ms
+      delay(50);
       continue;
     }
 
-    // Convert to JPEG if not already (optimization)
     if (fb->format != PIXFORMAT_JPEG) {
       if (!frame2jpg(fb, 80, &_jpg_buf, &_jpg_buf_len)) {
         Serial.println("JPEG compression failed");
@@ -61,19 +70,16 @@ esp_err_t stream_handler(httpd_req_t *req) {
       _jpg_buf = fb->buf;
     }
 
-    // Send frame efficiently
     char header[64];
     size_t header_len = snprintf(header, sizeof(header), 
       "%sContent-Type: image/jpeg\r\nContent-Length: %u\r\n\r\n", 
       STREAM_BOUNDARY, _jpg_buf_len);
 
-    // Single send for header and data
     res = httpd_resp_send_chunk(req, header, header_len);
     if (res == ESP_OK) {
       res = httpd_resp_send_chunk(req, (const char *)_jpg_buf, _jpg_buf_len);
     }
 
-    // Cleanup
     if (fb->format != PIXFORMAT_JPEG) free(_jpg_buf);
     else esp_camera_fb_return(fb);
 
@@ -81,11 +87,47 @@ esp_err_t stream_handler(httpd_req_t *req) {
       Serial.println("Stream error");
       break;
     }
-
-    // Task yield instead of delay
     taskYIELD();
   }
   return res;
+}
+
+// JSON Movement Handler
+esp_err_t movement_handler(httpd_req_t *req) {
+  char content[100];
+  size_t recv_size = min(req->content_len, sizeof(content) - 1);
+
+  int ret = httpd_req_recv(req, content, recv_size);
+  if (ret <= 0) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Failed to receive data");
+    return ESP_FAIL;
+  }
+  content[ret] = '\0';
+
+  StaticJsonDocument<200> doc;
+  DeserializationError error = deserializeJson(doc, content);
+  if (error) {
+    httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
+    return ESP_FAIL;
+  }
+
+  // Update movement values
+  movement.up = doc["up"] | 0;
+  movement.down = doc["down"] | 0;
+  movement.left = doc["left"] | 0;
+  movement.right = doc["right"] | 0;
+  movement.forward = doc["forward"] | 0;
+  movement.backward = doc["backward"] | 0;
+
+  // Print movement for debugging
+  Serial.printf("Movement - Up: %d, Down: %d, Left: %d, Right: %d, Forward: %d, Backward: %d\n",
+    movement.up, movement.down, movement.left, movement.right, 
+    movement.forward, movement.backward);
+
+  // Send response
+  const char* resp = "Movement command received";
+  httpd_resp_send(req, resp, strlen(resp));
+  return ESP_OK;
 }
 
 // Start Server
@@ -93,31 +135,40 @@ void startServer() {
   httpd_config_t config = HTTPD_DEFAULT_CONFIG();
   config.server_port = 80;
   config.ctrl_port = 32768;
-  config.max_open_sockets = 4;    // Reduced from default 7
-  config.stack_size = 4096;       // Increased for stability
-  config.task_priority = 5;       // Higher priority
+  config.max_open_sockets = 4;
+  config.stack_size = 4096;
+  config.task_priority = 5;
 
   httpd_handle_t server = NULL;
   if (httpd_start(&server, &config) == ESP_OK) {
+    // Stream endpoint
     httpd_uri_t uri_stream = {
       .uri       = "/stream",
       .method    = HTTP_GET,
       .handler   = stream_handler,
       .user_ctx  = NULL
     };
+    // Movement endpoint
+    httpd_uri_t uri_move = {
+      .uri       = "/move",
+      .method    = HTTP_POST,
+      .handler   = movement_handler,
+      .user_ctx  = NULL
+    };
+    
     httpd_register_uri_handler(server, &uri_stream);
+    httpd_register_uri_handler(server, &uri_move);
     Serial.println("✅ Server started");
   } else {
     Serial.println("❌ Failed to start server");
   }
 }
 
-// Setup
+// Setup (unchanged except for serial message)
 void setup() {
   Serial.begin(115200);
-  Serial.setDebugOutput(false);  // Disable debug output to save resources
+  Serial.setDebugOutput(false);
 
-  // Camera configuration
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer   = LEDC_TIMER_0;
@@ -137,10 +188,10 @@ void setup() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 10000000;      // Reduced from 20MHz
+  config.xclk_freq_hz = 10000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size   = FRAMESIZE_QVGA; 
-  config.jpeg_quality = 12;            // Slightly lower quality for speed
+  config.frame_size   = FRAMESIZE_QVGA;
+  config.jpeg_quality = 12;
   config.fb_count     = 2;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
   config.grab_mode    = CAMERA_GRAB_LATEST;
@@ -151,7 +202,7 @@ void setup() {
   }
   Serial.println("✅ Camera initialized");
   WiFi.begin(ssid, password);
-  WiFi.setSleep(false);  // Disable WiFi sleep for better performance
+  WiFi.setSleep(false);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -160,6 +211,9 @@ void setup() {
   Serial.print("🌐 Stream at: http://");
   Serial.print(WiFi.localIP());
   Serial.println("/stream");
+  Serial.print("🎮 Move at: http://");
+  Serial.print(WiFi.localIP());
+  Serial.println("/move");
 
   startServer();
 }
@@ -175,5 +229,9 @@ void loop() {
     }
     Serial.println("\n✅ WiFi reconnected");
   }
-  delay(10000);  // Increased to 10s to reduce CPU load
+  
+  // Here you can add code to process the movement variables
+  // For example, control motors based on movement.up, movement.down, etc.
+  
+  delay(10000);
 }
