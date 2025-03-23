@@ -1,118 +1,159 @@
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
 
-// PCA9685 PWM driver initialization (default address 0x40)
+// Initialize PCA9685 servo driver at default address 0x40
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(0x40);
 
-// Servo pulse width limits and frequency
-#define SERVO_MIN 100   // Minimum pulse width (adjust based on your servos)
-#define SERVO_MAX 700   // Maximum pulse width (adjust based on your servos)
-#define SERVO_FREQ 50   // Servo frequency in Hz
+// Servo pulse width range (0° to 270°)
+#define SERVO_MIN 100 // Pulse width for 0°
+#define SERVO_MAX 700 // Pulse width for 270°
+#define SERVO_FREQ 50 // Servo frequency in Hz
 
 // Servo channel definitions
-#define wrist   0  // Wrist (not used in this integration)
-#define middle  1  // Middle finger (not used)
-#define thumb   2  // Thumb (not used)
-#define ring    3  // Ring finger (not used)
-#define index   4  // Index finger (not used)
-#define pinky   5  // Pinky finger (not used)
-#define pronate 6  // Forearm rotation (not used)
-#define elbow   7  // Elbow servo for Y-axis movement
-// Servo 8 is base rotation (X-axis)
-// Servo 9 and 10 are set initially but adjusted with elbow
+#define wrist   0  // Wrist (base rotation)
+#define middle  1  // Middle finger
+#define thumb   2  // Thumb
+#define ring    3  // Ring finger
+#define index   4  // Index finger
+#define pinky   5  // Pinky finger
+#define pronate 6  // Pronate (forearm rotation)
+#define elbow   7  // Elbow
 
-// Global state variables
-int current_elbow_angle = 85;    // Initial elbow angle in degrees
-float current_R = 40.64;         // Initial reach in cm (16 inches)
-int current_servo8_angle = 93;   // Initial base angle in degrees
+// Global variables for tracking state
+int current_elbow_angle = 85;      // Initial elbow angle in degrees
+float current_R = 40.64;           // Initial horizontal distance in cm (16 inches)
+int current_servo8_angle = 93;     // Initial angle of servo 8 in degrees
 
-// Arm geometry constants
-const float R_MAX = 40.64;       // Maximum reach in cm
-const float THETA_MIN = 85.0;    // Minimum elbow angle in degrees
-const float THETA_MAX = 270.0;   // Maximum elbow angle in degrees
+// Constants for calculations
+const float R_MAX = 40.64;         // Maximum horizontal distance in cm
+const float THETA_MIN = 85.0;      // Minimum elbow angle in degrees
+const float THETA_MAX = 270.0;     // Maximum elbow angle in degrees
 
-// Convert angle to PWM pulse width
+// Convert angle to pulse width
 int angleToPulse(int angle) {
-  return map(angle, 0, 270, SERVO_MIN, SERVO_MAX);
+    return map(angle, 0, 270, SERVO_MIN, SERVO_MAX);
 }
 
-// Adjust elbow angle (Y-axis movement)
+// Pinch: Close thumb and index finger
+void pinch() {
+    int thumbAngle = 45;
+    int indexAngle = 60;
+    pwm.setPWM(thumb, 0, angleToPulse(thumbAngle));
+    pwm.setPWM(index, 0, angleToPulse(indexAngle));
+    pwm.setPWM(pinky, 0, angleToPulse(0));
+    pwm.setPWM(wrist, 0, angleToPulse(0));
+    pwm.setPWM(middle, 0, angleToPulse(0));
+    pwm.setPWM(ring, 0, angleToPulse(0));
+    Serial.print("Pinch - Thumb angle: ");
+    Serial.print(thumbAngle);
+    Serial.print(", Index angle: ");
+    Serial.println(indexAngle);
+}
+
+// Grab: Close all fingers
+void grab() {
+    int thumbAngle = 50;
+    int fingerAngle = 70;
+    pwm.setPWM(wrist, 0, angleToPulse(0));
+    pwm.setPWM(pinky, 0, angleToPulse(fingerAngle));
+    pwm.setPWM(ring, 0, angleToPulse(fingerAngle));
+    pwm.setPWM(middle, 0, angleToPulse(fingerAngle));
+    pwm.setPWM(index, 0, angleToPulse(fingerAngle));
+    pwm.setPWM(thumb, 0, angleToPulse(thumbAngle));
+    Serial.print("Grab - Thumb angle: ");
+    Serial.print(thumbAngle);
+    Serial.print(", Finger angle: ");
+    Serial.println(fingerAngle);
+}
+
+// Open: Release all fingers
+void open() {
+    pwm.setPWM(wrist, 0, angleToPulse(0));
+    pwm.setPWM(thumb, 0, angleToPulse(0));
+    pwm.setPWM(index, 0, angleToPulse(0));
+    pwm.setPWM(middle, 0, angleToPulse(0));
+    pwm.setPWM(ring, 0, angleToPulse(0));
+    pwm.setPWM(pinky, 0, angleToPulse(0));
+    Serial.println("Open - All fingers released");
+}
+
+// Move: Adjust elbow angle and keep forearm parallel
 void move(int cm) {
-  int proposed_elbow_angle = current_elbow_angle + cm;
-  if (proposed_elbow_angle < THETA_MIN) return; // No movement below minimum
-  
-  int new_elbow_angle = min(proposed_elbow_angle, static_cast<int>(THETA_MAX));
-  int new_servo10_angle = 155 - new_elbow_angle; // Keep forearm parallel
-  new_servo10_angle = constrain(new_servo10_angle, 0, 270);
+    int proposed_elbow_angle = current_elbow_angle + cm;
+    if (proposed_elbow_angle < THETA_MIN) return; // Below minimum, no movement
 
-  pwm.setPWM(elbow, 0, angleToPulse(new_elbow_angle));
-  pwm.setPWM(10, 0, angleToPulse(new_servo10_angle));
-  current_elbow_angle = new_elbow_angle;
+    int new_elbow_angle = min(proposed_elbow_angle, static_cast<int>(THETA_MAX)); // Clamp to max
+    int new_servo10_angle = 155 - new_elbow_angle; // Keep forearm parallel
+    new_servo10_angle = constrain(new_servo10_angle, 0, 270); // Clamp to servo limits
 
-  // Update current reach
-  current_R = R_MAX * (1 - (current_elbow_angle - THETA_MIN) / (THETA_MAX - THETA_MIN));
-  Serial.printf("Elbow moved to %d degrees, current_R=%.2f cm\n", current_elbow_angle, current_R);
+    pwm.setPWM(elbow, 0, angleToPulse(new_elbow_angle));
+    pwm.setPWM(10, 0, angleToPulse(new_servo10_angle));
+    current_elbow_angle = new_elbow_angle;
+
+    // Update horizontal distance (linear approximation)
+    current_R = R_MAX * (1 - (static_cast<float>(current_elbow_angle) - THETA_MIN) / (THETA_MAX - THETA_MIN));
+    Serial.print("Move - Elbow angle: ");
+    Serial.print(new_elbow_angle);
+    Serial.print(", Distance R: ");
+    Serial.println(current_R);
 }
 
-// Move Y-axis (forward/backward) based on delta_y_cm
-void moveY(float delta_y_cm) {
-  if (delta_y_cm == 0) return;
-  // Calculate angle change: increasing elbow angle decreases reach
-  float delta_theta = -delta_y_cm * (THETA_MAX - THETA_MIN) / R_MAX;
-  int cm = static_cast<int>(delta_theta);
-  move(cm);
-}
-
-// Move X-axis (left/right) based on delta_x_cm
+// Turn: Rotate base (servo 8) for lateral movement
 void turn(float lateral_cm) {
-  if (lateral_cm == 0 || current_R <= 0) return;
-  // Calculate base rotation angle
-  float phi_deg = (lateral_cm / current_R) * (180.0 / PI);
-  int new_servo8_angle = current_servo8_angle + static_cast<int>(phi_deg);
-  
-  // Constrain base angle (0° to 180° for simplicity, adjust as needed)
-  new_servo8_angle = constrain(new_servo8_angle, 0, 180);
-  
-  pwm.setPWM(8, 0, angleToPulse(new_servo8_angle));
-  current_servo8_angle = new_servo8_angle;
-  Serial.printf("Base turned to %d degrees (%.1f cm lateral)\n", current_servo8_angle, lateral_cm);
+    if (current_R <= 0) return; // Avoid division by zero
+
+    // Calculate angle change in degrees using small-angle approximation
+    float phi_deg = (lateral_cm / current_R) * (180.0 / PI);
+    int new_servo8_angle = current_servo8_angle + static_cast<int>(phi_deg);
+
+    // Clamp to servo limits
+    new_servo8_angle = constrain(new_servo8_angle, 0, 270);
+
+    pwm.setPWM(8, 0, angleToPulse(new_servo8_angle));
+    current_servo8_angle = new_servo8_angle;
+    Serial.print("Turn - Lateral movement: ");
+    Serial.print(lateral_cm);
+    Serial.print(" cm, Servo 8 angle: ");
+    Serial.println(new_servo8_angle);
 }
 
+// Setup: Initialize servos and serial communication
 void setup() {
-  Serial.begin(115200);  // Match ESP32 baud rate
-  while (!Serial);
+    Serial.begin(115200);  // Match ESP32 baud rate
+    while (!Serial);
 
-  // Initialize I2C and PWM driver
-  Wire.begin();
-  pwm.begin();
-  pwm.setPWMFreq(SERVO_FREQ);
-  delay(500);
+    Wire.begin();
+    pwm.begin();
+    pwm.setPWMFreq(SERVO_FREQ);
+    delay(500);
 
-  // Set initial servo positions
-  pwm.setPWM(10, 0, angleToPulse(70));  // Forearm parallel
-  pwm.setPWM(9, 0, angleToPulse(150));  // Fixed position (adjust as needed)
-  pwm.setPWM(8, 0, angleToPulse(93));   // Base centered
-  pwm.setPWM(elbow, 0, angleToPulse(85)); // Elbow at minimum
+    // Set initial servo positions
+    pwm.setPWM(10, 0, angleToPulse(70));  // Servo 10 (forearm parallel)
+    pwm.setPWM(9, 0, angleToPulse(150));  // Servo 9 (optional joint)
+    pwm.setPWM(8, 0, angleToPulse(93));   // Servo 8 (base rotation)
+    pwm.setPWM(elbow, 0, angleToPulse(85)); // Elbow
+    pwm.setPWM(pronate, 0, angleToPulse(0)); // Pronate
 
-  Serial.println("✅ Nano 33 ready for serial control");
+    Serial.println("✅ Nano 33 ready for ESP32 serial control");
 }
 
+// Loop: Control arm via serial input from ESP32
 void loop() {
-  if (Serial.available() > 0) {
-    String data = Serial.readStringUntil('\n');
-    data.trim();
+    if (Serial.available() > 0) {
+        String data = Serial.readStringUntil('\n');
+        data.trim();
 
-    // Parse "delta_x_cm,delta_y_cm"
-    int commaIndex = data.indexOf(',');
-    if (commaIndex != -1) {
-      float delta_x_cm = data.substring(0, commaIndex).toFloat();
-      float delta_y_cm = data.substring(commaIndex + 1).toFloat();
+        // Parse "delta_x_cm,delta_y_cm"
+        int commaIndex = data.indexOf(',');
+        if (commaIndex != -1) {
+            float delta_x_cm = data.substring(0, commaIndex).toFloat();
+            float delta_y_cm = data.substring(commaIndex + 1).toFloat();
 
-      Serial.printf("Received: delta_x_cm=%.1f, delta_y_cm=%.1f\n", delta_x_cm, delta_y_cm);
+            Serial.printf("Received: delta_x_cm=%.1f, delta_y_cm=%.1f\n", delta_x_cm, delta_y_cm);
 
-      // Move the arm
-      turn(delta_x_cm);  // X-axis (lateral movement via base rotation)
-      moveY(delta_y_cm); // Y-axis (reach adjustment via elbow)
+            // Use original turn and move functions
+            turn(delta_x_cm);       // Lateral movement (X-axis)
+            move((int)delta_y_cm);  // Reach adjustment (Y-axis, converted to int)
+        }
     }
-  }
 }
