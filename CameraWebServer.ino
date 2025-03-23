@@ -28,16 +28,6 @@ const char* password = "deeznuts";
 #define STREAM_CONTENT_TYPE "multipart/x-mixed-replace;boundary=frame"
 #define STREAM_BOUNDARY "\r\n--frame\r\n"
 
-// Movement variables
-struct Movement {
-  int up = 0;
-  int down = 0;
-  int left = 0;
-  int right = 0;
-  int forward = 0;
-  int backward = 0;
-} movement;
-
 // Stream Handler (unchanged)
 esp_err_t stream_handler(httpd_req_t *req) {
   camera_fb_t *fb = NULL;
@@ -92,7 +82,7 @@ esp_err_t stream_handler(httpd_req_t *req) {
   return res;
 }
 
-// JSON Movement Handler
+// Movement Handler
 esp_err_t movement_handler(httpd_req_t *req) {
   char content[100];
   size_t recv_size = min(req->content_len, sizeof(content) - 1);
@@ -107,24 +97,21 @@ esp_err_t movement_handler(httpd_req_t *req) {
   StaticJsonDocument<200> doc;
   DeserializationError error = deserializeJson(doc, content);
   if (error) {
+    Serial.printf("JSON parse error: %s\n", error.c_str());
     httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid JSON");
     return ESP_FAIL;
   }
 
-  // Update movement values
-  movement.up = doc["up"] | 0;
-  movement.down = doc["down"] | 0;
-  movement.left = doc["left"] | 0;
-  movement.right = doc["right"] | 0;
-  movement.forward = doc["forward"] | 0;
-  movement.backward = doc["backward"] | 0;
+  float delta_x_cm = doc["delta_x_cm"] | 0.0;
+  float delta_y_cm = doc["delta_y_cm"] | 0.0;
 
-  // Print movement for debugging
-  Serial.printf("Movement - Up: %d, Down: %d, Left: %d, Right: %d, Forward: %d, Backward: %d\n",
-    movement.up, movement.down, movement.left, movement.right, 
-    movement.forward, movement.backward);
+  Serial.printf("Received movement: delta_x_cm=%.1f, delta_y_cm=%.1f\n", delta_x_cm, delta_y_cm);
 
-  // Send response
+  // Send via Serial (GPIO 1 TX) to Nano 33 BLE
+  char serialData[50];
+  snprintf(serialData, sizeof(serialData), "%.1f,%.1f\n", delta_x_cm, delta_y_cm);
+  Serial.print(serialData);  // Send via GPIO 1 TX
+
   const char* resp = "Movement command received";
   httpd_resp_send(req, resp, strlen(resp));
   return ESP_OK;
@@ -141,14 +128,12 @@ void startServer() {
 
   httpd_handle_t server = NULL;
   if (httpd_start(&server, &config) == ESP_OK) {
-    // Stream endpoint
     httpd_uri_t uri_stream = {
       .uri       = "/stream",
       .method    = HTTP_GET,
       .handler   = stream_handler,
       .user_ctx  = NULL
     };
-    // Movement endpoint
     httpd_uri_t uri_move = {
       .uri       = "/move",
       .method    = HTTP_POST,
@@ -164,11 +149,12 @@ void startServer() {
   }
 }
 
-// Setup (unchanged except for serial message)
+// Setup
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(115200);  // Serial communication on GPIO 1 (TX) for both debugging and Nano
   Serial.setDebugOutput(false);
 
+  // Camera setup
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer   = LEDC_TIMER_0;
@@ -190,17 +176,27 @@ void setup() {
   config.pin_reset    = RESET_GPIO_NUM;
   config.xclk_freq_hz = 10000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size   = FRAMESIZE_QVGA;
-  config.jpeg_quality = 12;
+  config.frame_size   = FRAMESIZE_VGA;
+  config.jpeg_quality = 10;
   config.fb_count     = 2;
   config.fb_location  = CAMERA_FB_IN_PSRAM;
   config.grab_mode    = CAMERA_GRAB_LATEST;
 
-  if (esp_camera_init(&config) != ESP_OK) {
-    Serial.println("❌ Camera init failed");
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("❌ Camera init failed with error: %s\n", esp_err_to_name(err));
     while (true) delay(1000);
   }
+
+  sensor_t *s = esp_camera_sensor_get();
+  if (s != NULL) {
+    s->set_brightness(s, 2);
+    s->set_contrast(s, 1);
+    s->set_saturation(s, 0);
+  }
   Serial.println("✅ Camera initialized");
+
+  // WiFi setup
   WiFi.begin(ssid, password);
   WiFi.setSleep(false);
   while (WiFi.status() != WL_CONNECTED) {
@@ -228,10 +224,7 @@ void loop() {
       Serial.print(".");
     }
     Serial.println("\n✅ WiFi reconnected");
+    startServer();
   }
-  
-  // Here you can add code to process the movement variables
-  // For example, control motors based on movement.up, movement.down, etc.
-  
   delay(10000);
 }
