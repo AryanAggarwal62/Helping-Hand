@@ -1,28 +1,38 @@
+import os
 import pyaudio
 import time
 from google.cloud import speech_v1p1beta1 as speech
 import cohere
 import numpy as np
 
-# Step 1: Set up the Speech Client with hardcoded credentials
-client = speech.SpeechClient.from_service_account_json("C:/Users/aryan/Downloads/speech-to-text-key.json")
+# Retrieve credentials from environment variables
+google_credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+if not google_credentials_path:
+    raise EnvironmentError("Please set the GOOGLE_APPLICATION_CREDENTIALS environment variable with the path to your Google Cloud service account JSON file.")
 
-# Step 2: Set up Cohere Client with your actual API key
-co = cohere.Client("tdecBBdy1ycQrF8wnnCV5nEogSXY3lxJMAtyyLaa")  # Replace with your real Cohere API key
+cohere_api_key = os.getenv("COHERE_API_KEY")
+if not cohere_api_key:
+    raise EnvironmentError("Please set the COHERE_API_KEY environment variable with your Cohere API key.")
 
-# Step 3: Define 10 common colors with HSV bounds
+# Set up the Speech Client using credentials from environment variables
+client = speech.SpeechClient.from_service_account_json(google_credentials_path)
+
+# Set up the Cohere Client using the API key from environment variables
+co = cohere.Client(cohere_api_key)
+
+# Define 10 common colors with HSV bounds
 COLOR_RANGES = {
     "red": [
-        np.array([0, 120, 70]),      # Lower range for bright reds
-        np.array([10, 255, 255]),    # Upper range for bright reds
-        np.array([170, 120, 70]),    # Lower range for dark reds (wraps around hue scale)
-        np.array([180, 255, 255])    # Upper range for dark reds
+        np.array([0, 120, 70]),
+        np.array([10, 255, 255]),
+        np.array([170, 120, 70]),
+        np.array([180, 255, 255])
     ],
     "blue": [
-        np.array([100, 150, 0]),     # Lower
-        np.array([140, 255, 255]),   # Upper
-        np.array([100, 100, 0]),     # Darker blues
-        np.array([130, 255, 200])    # Upper for darker blues
+        np.array([100, 150, 0]),
+        np.array([140, 255, 255]),
+        np.array([100, 100, 0]),
+        np.array([130, 255, 200])
     ],
     "green": [
         np.array([35, 100, 50]),
@@ -74,17 +84,17 @@ COLOR_RANGES = {
     ]
 }
 
-# Step 4: Configure streaming recognition
+# Configure streaming recognition
 streaming_config = speech.StreamingRecognitionConfig(
     config=speech.RecognitionConfig(
         encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
         sample_rate_hertz=16000,
         language_code="en-US"
     ),
-    interim_results=False  # Disable interim results
+    interim_results=False
 )
 
-# Step 5: Set up PyAudio for microphone input
+# Set up PyAudio for microphone input
 p = pyaudio.PyAudio()
 stream = p.open(
     format=pyaudio.paInt16,
@@ -94,7 +104,7 @@ stream = p.open(
     frames_per_buffer=1024
 )
 
-# Step 6: Define a generator to stream audio data
+# Define a generator to stream audio data
 def audio_stream_generator():
     start_time = time.time()
     duration = 5  # 5 seconds for speed
@@ -102,7 +112,7 @@ def audio_stream_generator():
         data = stream.read(1024)
         yield speech.StreamingRecognizeRequest(audio_content=data)
 
-# Step 7: Extract color using Cohere
+# Extract color using Cohere
 def extract_color(text):
     prompt = (
         f"Extract the color from this sentence: '{text}'. "
@@ -118,7 +128,7 @@ def extract_color(text):
     color = response.generations[0].text.strip().lower()
     return color if color in COLOR_RANGES else "none"
 
-# Step 8: Process streaming recognition and extract color
+# Process streaming recognition and extract color
 def run():
     try:
         print("Listening to microphone... Speak now!")
@@ -134,7 +144,7 @@ def run():
                         print("Final transcript: {}".format(result.alternatives[0].transcript))
                         final_transcript = result.alternatives[0].transcript
 
-        # Step 9: Extract color and get bounds
+        # Extract color and get bounds
         if final_transcript:
             color = extract_color(final_transcript)
             color_bounds = COLOR_RANGES.get(color, [np.array([0, 0, 0]), np.array([0, 0, 0]), np.array([0, 0, 0]), np.array([0, 0, 0])])
@@ -150,4 +160,5 @@ def run():
         p.terminate()
         print("Stopped listening.")
 
-
+if __name__ == "__main__":
+    run()
