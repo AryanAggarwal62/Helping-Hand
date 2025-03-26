@@ -22,8 +22,8 @@
 #define PCLK_GPIO_NUM     22
 
 // WiFi Credentials
-const char* ssid = "Sigma Phone";
-const char* password = "deeznuts";
+const char* ssid = "********";
+const char* password = "**********";
 
 #define STREAM_CONTENT_TYPE "multipart/x-mixed-replace;boundary=frame"
 #define STREAM_BOUNDARY "\r\n--frame\r\n"
