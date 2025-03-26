@@ -3,7 +3,7 @@
 #include <esp_http_server.h>
 #include <ArduinoJson.h>
 
-// Camera Pin Config (unchanged)
+// Camera Pin Config
 #define PWDN_GPIO_NUM     -1
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM     21
